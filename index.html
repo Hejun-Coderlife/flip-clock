@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>赫眉 · 翻页时钟</title>
 <link rel="icon" href="favicon.ico" sizes="any">
@@ -228,7 +231,7 @@
     transition:opacity .4s ease;
     z-index:10;
   }
-  body.idle .controls,body.idle .fs{opacity:0;pointer-events:none;}
+  body.idle .controls{opacity:0;pointer-events:none;}
 
   .swatches{display:flex;gap:9px;}
   .sw{
@@ -318,7 +321,7 @@
   .unit-row span{width:76px;}
   .unit-row .sp{width:14px;}
 
-  .presets{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:18px 0 20px;max-width:280px;}
+  .presets{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:18px 0 16px;max-width:280px;}
   .chip{
     background:rgba(255,255,255,.1);
     border:1px solid rgba(255,255,255,.14);
@@ -329,6 +332,18 @@
   }
   .chip:hover{background:rgba(255,255,255,.24);}
 
+  .until{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;}
+  .until span{opacity:.6;letter-spacing:.08em;}
+  .until i{font-style:normal;opacity:.5;font-size:18px;}
+  .until input{
+    width:46px;height:36px;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:7px;
+    color:#fff;text-align:center;outline:none;
+    font:700 17px/1 "Helvetica Neue",Helvetica,Arial,sans-serif;
+  }
+  .until input::placeholder{color:rgba(255,255,255,.3);font-weight:500;font-size:13px;}
+  .until input:focus{border-color:rgba(255,255,255,.55);background:rgba(255,255,255,.14);}
+  .until-hint{min-height:18px;margin:8px 0 16px;font-size:12px;opacity:.6;letter-spacing:.04em;}
   .panel-actions{display:flex;gap:10px;justify-content:center;}
   .pbtn{
     cursor:pointer;border:1px solid rgba(255,255,255,.2);
@@ -364,16 +379,19 @@
   }
   .logo img{display:block;width:100%;height:auto;}
 
-  .fs{
-    position:fixed;left:22px;bottom:20px;
-    opacity:.5;transition:opacity .4s ease;z-index:10;
+  .fsb{display:inline-flex;align-items:center;gap:6px;}
+  .fsb svg{width:15px;height:15px;stroke:currentColor;stroke-width:2.2;fill:none;}
+  .toast{
+    position:fixed;left:50%;bottom:70px;transform:translateX(-50%);
+    background:rgba(20,14,16,.9);color:#fff;border:1px solid rgba(255,255,255,.14);
+    font:600 13px/1.5 "Helvetica Neue","PingFang SC",sans-serif;
+    padding:9px 16px;border-radius:9px;z-index:30;white-space:nowrap;
+    opacity:0;pointer-events:none;transition:opacity .3s ease;
   }
-  .fs svg{display:block;width:20px;height:20px;stroke:rgba(255,255,255,.9);stroke-width:2;fill:none;}
-  .fs:hover{opacity:1;}
+  .toast.show{opacity:1;}
 
   @media (max-width:640px){
     .controls{right:14px;bottom:14px;gap:10px;}
-    .fs{left:14px;bottom:12px;}
     .logo{top:8vh;width:60vw;}
   }
 </style>
@@ -552,9 +570,7 @@
     </div>
   </div>
 
-  <button class="fs" id="fsBtn" title="全屏">
-    <svg viewBox="0 0 24 24"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>
-  </button>
+  <div class="toast" id="toast"></div>
 
   <div class="flash"></div>
 
@@ -570,6 +586,14 @@
       </div>
       <div class="unit-row"><span>时</span><i class="sp"></i><span>分</span><i class="sp"></i><span>秒</span></div>
       <div class="presets" id="presets"></div>
+      <div class="until">
+        <span>或者 到</span>
+        <input id="inUH" type="text" inputmode="numeric" maxlength="2" placeholder="时">
+        <i>:</i>
+        <input id="inUM" type="text" inputmode="numeric" maxlength="2" placeholder="分">
+        <span>结束</span>
+      </div>
+      <div class="until-hint" id="untilHint"></div>
       <div class="panel-actions">
         <button class="pbtn" id="cancelBtn">取消</button>
         <button class="pbtn primary" id="startBtn">开始</button>
@@ -591,6 +615,9 @@
     <div class="swatches" id="swatches"></div>
     <button class="btn" id="bgBtn">背景</button>
     <button class="btn" id="fmtBtn">12H</button>
+    <button class="btn fsb" id="fsBtn" title="全屏（F）">
+      <svg viewBox="0 0 24 24"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg><span>全屏</span>
+    </button>
   </div>
 
 <script>
@@ -696,6 +723,8 @@
       if(remain === 0) finish();
     }
     const total = Math.ceil(remain / 1000);           // 向上取整：5:00 起步，归零即到点
+    if(running && total >= 1 && total <= 15 && total !== lastTick && remain > 0) tick(total);
+    lastTick = total;
     const h = Math.floor(total / 3600),
           m = Math.floor(total % 3600 / 60),
           s = total % 60;
@@ -715,9 +744,30 @@
     beep();
   }
 
+  let actx = null;
+  function audio(){
+    try{
+      if(!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if(actx.state === 'suspended') actx.resume();
+    }catch(e){}
+    return actx;
+  }
+  // 最后 15 秒每秒滴一声，最后 5 秒更高更响
+  function tick(sec){
+    const ctx = audio(); if(!ctx) return;
+    const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = sec <= 5 ? 1320 : 990;
+    o.connect(g); g.connect(ctx.destination);
+    const v = sec <= 5 ? .32 : .2;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(v, t + .01);
+    g.gain.exponentialRampToValueAtTime(.001, t + .12);
+    o.start(t); o.stop(t + .14);
+  }
+  let lastTick = 0;
   function beep(){
     try{
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = audio(); if(!ctx) return;
       [0, .5, 1].forEach(t=>{
         const o = ctx.createOscillator(), g = ctx.createGain();
         o.type = 'sine'; o.frequency.value = 880;
@@ -727,7 +777,6 @@
         g.gain.linearRampToValueAtTime(0, ctx.currentTime + t + .3);
         o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + .32);
       });
-      setTimeout(()=>ctx.close(), 2500);
     }catch(e){}
   }
 
@@ -735,6 +784,8 @@
     if(remain <= 0) remain = setMs;
     if(remain <= 0) return;
     endAt = Date.now() + remain;
+    lastTick = Math.ceil(remain / 1000);            // 开始那一秒不响，从下一秒算
+    audio();                                        // 点按时解锁声音（手机/Safari 需要）
     running = true;
     document.body.classList.remove('alarm');
     syncBtns(); render();
@@ -788,6 +839,7 @@
     inH.value = pad(Math.floor(total / 3600));
     inM.value = pad(Math.floor(total % 3600 / 60));
     inS.value = pad(total % 60);
+    clearUntil();
     panel.classList.add('show');
     setTimeout(()=>{ inM.focus(); inM.select(); }, 30);
   }
@@ -798,7 +850,9 @@
     return (n(inH.value) * 3600 + n(inM.value) * 60 + n(inS.value)) * 1000;
   }
   function applyPanel(andStart){
-    const ms = readInputs();
+    const u = untilMs();
+    if(u) fillFromMs(u);                        // 按「到几点」时，以点开始这一刻重新算一次
+    const ms = u || readInputs();
     if(ms <= 0) return;
     setMs  = ms;
     remain = ms;
@@ -811,9 +865,51 @@
   document.getElementById('cancelBtn').addEventListener('click', closePanel);
   panel.addEventListener('click', e=>{ if(e.target === panel) closePanel(); });
 
+  /* 到几点结束 → 自动算时长 */
+  const inUH = document.getElementById('inUH'), inUM = document.getElementById('inUM'),
+        untilHint = document.getElementById('untilHint');
+  function untilMs(){
+    if(inUH.value === '') return 0;
+    const h = parseInt(inUH.value, 10), m = parseInt(inUM.value || '0', 10);
+    if(!(h >= 0 && h <= 23 && m >= 0 && m <= 59)) return 0;
+    const now = new Date(), t = new Date(now);
+    t.setHours(h, m, 0, 0);
+    if(t <= now) t.setDate(t.getDate() + 1);     // 已经过了就算明天这个点
+    return t - now;
+  }
+  function fillFromMs(ms){
+    const total = Math.ceil(ms / 1000);
+    inH.value = pad(Math.min(99, Math.floor(total / 3600)));
+    inM.value = pad(Math.floor(total % 3600 / 60));
+    inS.value = pad(total % 60);
+  }
+  function updateUntil(){
+    const ms = untilMs();
+    if(!ms){
+      untilHint.textContent = inUH.value === '' ? '' : '时间不对：时 0–23，分 0–59';
+      return;
+    }
+    fillFromMs(ms);
+    const total = Math.ceil(ms / 1000), h = Math.floor(total / 3600), m = Math.floor(total % 3600 / 60);
+    const end = new Date(Date.now() + ms), tomorrow = end.getDate() !== new Date().getDate();
+    untilHint.textContent = (tomorrow ? '明天 ' : '') + pad(end.getHours()) + ':' + pad(end.getMinutes())
+      + ' 结束 · 还有 ' + (h ? h + ' 小时 ' : '') + m + ' 分' + (h ? '' : ' ' + (total % 60) + ' 秒');
+  }
+  function clearUntil(){ inUH.value = ''; inUM.value = ''; untilHint.textContent = ''; }
+  [inUH, inUM].forEach((el,i,arr)=>{
+    el.addEventListener('focus', ()=>el.select());
+    el.addEventListener('input', ()=>{
+      el.value = el.value.replace(/\D/g,'').slice(0,2);
+      if(el.value.length === 2 && arr[i+1]) arr[i+1].focus();
+      updateUntil();
+    });
+    el.addEventListener('keydown', e=>{ if(e.key === 'Enter') applyPanel(true); });
+  });
+
   [inH, inM, inS].forEach((el,i,arr)=>{
     el.addEventListener('focus', ()=>el.select());
     el.addEventListener('input', ()=>{
+      clearUntil();                              // 手动改时长就不再按「到几点」
       el.value = el.value.replace(/\D/g,'').slice(0,2);
       if(el.value.length === 2 && arr[i+1]) arr[i+1].focus();
     });
@@ -831,6 +927,7 @@
       inH.value = pad(Math.floor(min / 60));
       inM.value = pad(min % 60);
       inS.value = '00';
+      clearUntil();
     });
     presetBox.appendChild(b);
   });
@@ -1179,9 +1276,28 @@
 
   /* ---------- 全屏 & 自动隐藏控件 ---------- */
   document.getElementById('fsBtn').addEventListener('click', toggleFs);
+  const fsBtn = document.getElementById('fsBtn'), fsTxt = fsBtn.querySelector('span');
+  const fsPath = fsBtn.querySelector('path');
+  const fsEl = ()=> document.fullscreenElement || document.webkitFullscreenElement;
+  const fsOk = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
   function toggleFs(){
-    if(document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen();
+    const d = document, el = d.documentElement;
+    if(!fsOk){ toast('iPhone 不支持网页全屏：点「分享」→「添加到主屏幕」，从桌面图标打开即全屏'); return; }
+    if(fsEl()) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    else (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+  }
+  function syncFs(){
+    const on = !!fsEl();
+    fsTxt.textContent = on ? '退出全屏' : '全屏';
+    fsPath.setAttribute('d', on ? 'M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6' : 'M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6');
+  }
+  document.addEventListener('fullscreenchange', syncFs);
+  document.addEventListener('webkitfullscreenchange', syncFs);
+  let toastT;
+  function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 4000);
   }
   document.addEventListener('keydown', e=>{
     if(e.target.tagName === 'INPUT'){                       // 面板里打字时不抢按键
